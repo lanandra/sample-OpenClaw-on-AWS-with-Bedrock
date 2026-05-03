@@ -77,7 +77,7 @@ Parameters:
 
   CreateVPCEndpoints:
     Type: String
-    Default: "true"
+    Default: "false"
     Description: "Create VPC endpoints for private network access to Bedrock and SSM"
     AllowedValues:
       - "true"
