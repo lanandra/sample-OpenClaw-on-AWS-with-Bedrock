@@ -65,7 +65,7 @@ Parameters:
 
   CreateVPCEndpoints:
     Type: String
-    Default: "true"
+    Default: "false"
     Description: "Create VPC endpoints for private network access to Bedrock and SSM"
     AllowedValues:
       - "true"
@@ -120,8 +120,8 @@ Parameters:
 
   AllowedCountries:
     Type: CommaDelimitedList
-    Default: "AU"
-    Description: "IMPORTANT: Default restricts CloudFront access to Australia (AU) only. Change before deployment to add other countries (e.g., AU,US,CN,GB,JP) or leave empty to allow all countries. ISO 3166-1 alpha-2 codes."
+    Default: ""
+    Description: "Optional: Restrict CloudFront access to specific countries using ISO 3166-1 alpha-2 codes (e.g., AU,US,GB,JP). Leave empty (default) to allow all countries worldwide."
 
 Conditions:
   CreateEndpoints: !Equals [!Ref CreateVPCEndpoints, "true"]
@@ -191,6 +191,45 @@ Mappings:
     r7g.medium: { Arch: "arm64" }
     r7g.large: { Arch: "arm64" }
     r7g.xlarge: { Arch: "arm64" }
+
+  # CloudFront Managed Prefix List IDs by Region
+  # AWS Global service: com.amazonaws.global.cloudfront.origin-facing
+  # Note: AWS China (cn-*) and GovCloud (us-gov-*) regions are separate partitions
+  # and do not have CloudFront service, so they are not included here.
+  CloudFrontPrefixListMap:
+    # US regions
+    us-east-1: { PrefixListId: "pl-3b927c52" }
+    us-east-2: { PrefixListId: "pl-b6a144df" }
+    us-west-1: { PrefixListId: "pl-4ea04527" }
+    us-west-2: { PrefixListId: "pl-82a045eb" }
+    # Asia Pacific regions
+    ap-south-1: { PrefixListId: "pl-9aa247f3" }
+    ap-south-2: { PrefixListId: "pl-02a34e6b" }
+    ap-northeast-1: { PrefixListId: "pl-58a04531" }
+    ap-northeast-2: { PrefixListId: "pl-22a6434b" }
+    ap-northeast-3: { PrefixListId: "pl-96a247ff" }
+    ap-southeast-1: { PrefixListId: "pl-31a34658" }
+    ap-southeast-2: { PrefixListId: "pl-b8a742d1" }
+    ap-southeast-3: { PrefixListId: "pl-1ea34677" }
+    ap-southeast-4: { PrefixListId: "pl-9aa344f3" }
+    # Canada regions
+    ca-central-1: { PrefixListId: "pl-38a64351" }
+    # Europe regions
+    eu-central-1: { PrefixListId: "pl-a3a144ca" }
+    eu-central-2: { PrefixListId: "pl-14a5467d" }
+    eu-west-1: { PrefixListId: "pl-4fa04526" }
+    eu-west-2: { PrefixListId: "pl-93a247fa" }
+    eu-west-3: { PrefixListId: "pl-75b1541c" }
+    eu-south-1: { PrefixListId: "pl-8fa045e6" }
+    eu-south-2: { PrefixListId: "pl-04a5466d" }
+    eu-north-1: { PrefixListId: "pl-fab65393" }
+    # South America regions
+    sa-east-1: { PrefixListId: "pl-5da64334" }
+    # Middle East and Africa regions
+    af-south-1: { PrefixListId: "pl-a9a045c0" }
+    me-south-1: { PrefixListId: "pl-17a3467e" }
+    me-central-1: { PrefixListId: "pl-a1a242c8" }
+    il-central-1: { PrefixListId: "pl-89a64be0" }
 
 
 Resources:
@@ -728,8 +767,8 @@ Resources:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-          SourcePrefixListId: pl-82a045eb
-          Description: "HTTP from CloudFront managed prefix list"
+          SourcePrefixListId: !FindInMap [CloudFrontPrefixListMap, !Ref "AWS::Region", PrefixListId]
+          Description: "HTTP from CloudFront managed prefix list (com.amazonaws.global.cloudfront.origin-facing)"
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: "0.0.0.0/0"

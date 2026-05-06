@@ -192,14 +192,19 @@ Switch models with one CloudFormation parameter — no code changes:
 | Component | Cost | Optional |
 |-----------|------|----------|
 | EC2 (c7g.large, Graviton) | ~$58 | Default |
-| EBS (30GB gp3 x2) | $4.80 | — |
-| VPC Endpoints | $29 | ✅ Disable to save |
-| CloudWatch Monitoring | ~$4 | ✅ Disable to save |
+| EBS (30GB gp3 x2) | ~$4.80 | Required |
+| NAT Gateway | ~$33 | Required (EC2 in private subnet) |
+| CloudWatch Monitoring | ~$4 | ✅ Disable to save $4/mo |
+| VPC Endpoints (9 interface) | ~$51 | ✅ Enable for private network (+$51/mo) |
+| ALB + CloudFront | ~$25 | ✅ Enable for public access (+$25/mo) |
+| AWS WAF | ~$10 | ✅ Only in us-east-1 (+$10/mo) |
 | Bedrock (Nova 2 Lite, ~100 conv/day) | $5-8 | Pay-per-use |
-| **Total (all options)** | **$96-101** | |
-| **Total (minimal)** | **$63-67** | VPCe + CW off |
+| **Total (default config)** | **$96-100/mo** | EC2 + NAT + monitoring + Bedrock |
+| **Total (minimal config, monitoring OFF)** | **$91-96/mo** | Save $4/mo by disabling CloudWatch |
+| **Total (VPC Endpoints ON)** | **$146-151/mo** | Add $51/mo for private network |
+| **Total (public access + WAF, us-east-1)** | **$180-190/mo** | Full security stack with public access |
 
-> Use `t4g.medium` ($24/mo) or `r7g.medium` ($30/mo, 8GB RAM) to reduce cost.
+> **Cost optimization**: Use `t4g.medium` ($24/mo) or `r7g.medium` ($30/mo, 8GB RAM) instead of c7g.large to save ~$30/mo. Enable VPC Endpoints only if you need private network routing (adds $51/mo).
 
 **Always included at no extra cost:**
 - 2GB swap (prevents OOM crashes)
@@ -208,13 +213,27 @@ Switch models with one CloudFormation parameter — no code changes:
 - IMDSv2 enforcement
 - `openclaw doctor --fix` post-install
 - systemd memory limits (graceful restart before OOM)
+- NAT Gateway (required for EC2 in private subnet)
+
+### Cost Breakdown by Configuration
+
+| Configuration | Monthly Cost | What You Get |
+|--------------|-------------|--------------|
+| **Default (VPCe OFF, monitoring ON)** | $96-100 | EC2 + NAT Gateway + CloudWatch + Bedrock. Traffic via NAT Gateway. SSM-only access. |
+| **Minimal (VPCe OFF, monitoring OFF)** | $91-96 | Above minus CloudWatch monitoring. Save $4/mo. |
+| **Private Network (VPCe ON)** | $146-151 | Default + 9 VPC endpoints for private AWS network routing. Add $51/mo. |
+| **Public Access (no WAF, any region)** | $170-180 | Above + ALB + CloudFront. Add $25/mo. No Layer 7 WAF. |
+| **Full Security (public + WAF, us-east-1 only)** | $180-190 | Above + AWS WAF (SQL injection, XSS, rate limiting). Add $10/mo. |
 
 ### Save Money
 
-- Use Nova 2 Lite instead of Claude → 90% cheaper
-- Use Graviton (ARM) instead of x86 → 20-40% cheaper
-- Skip VPC Endpoints → save $22/mo (less secure)
-- AWS Savings Plans → 30-40% off EC2
+- **Use Nova 2 Lite instead of Claude** → 90% cheaper inference ($0.30 vs $3-15 per 1M input tokens)
+- **Use Graviton (ARM) instead of x86** → 20-40% cheaper EC2
+- **Use smaller instance type** → t4g.medium ($24/mo) or r7g.medium ($30/mo) saves ~$30/mo vs c7g.large
+- **Default config (VPCe OFF)** → saves $51/mo vs private network (traffic via NAT Gateway instead)
+- **Skip public access** (`EnablePublicAccess=false`) → saves $25/mo (no ALB + CloudFront, use SSM Session Manager instead)
+- **Disable monitoring** (`EnableMonitoring=false`) → saves $4/mo (lose auto-recovery, health alarms, log shipping)
+- **AWS Savings Plans** → 30-40% off EC2 for 1-3 year commitment
 
 ### vs. Alternatives
 
@@ -245,15 +264,16 @@ Switch models with one CloudFormation parameter — no code changes:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `OpenClawModel` | Nova 2 Lite | Bedrock model ID |
-| `OpenClawVersion` | 2026.3.24 | `2026.3.24` (default, no model approval needed, WeChat compatible), `2026.4.5` (auto-discovery, embeddings), or `latest` |
-| `InstanceType` | c7g.large | EC2 instance type (compute-optimized, 2 vCPU) |
-| `CreateVPCEndpoints` | false | Private networking (+$29/mo) |
-| `EnableMonitoring` | true | CloudWatch monitoring, auto-recovery, log shipping (+~$4/mo) |
-| `EnableSandbox` | true | Docker isolation for code execution |
-| `EnableDataProtection` | false | Retain EBS volume on stack deletion |
-| `KeyPairName` | none | EC2 key pair (optional, for emergency SSH) |
-| `AllowedSSHCIDR` | _(empty)_ | CIDR for SSH access — leave empty to disable |
+| `OpenClawModel` | `global.amazon.nova-2-lite-v1:0` | Bedrock model ID - Nova 2 Lite offers best price-performance for everyday tasks. 10 models available: Nova 2 Lite, Claude Sonnet 4.5, Nova Pro, Claude Opus 4.6, Claude Opus 4.5, Claude Haiku 4.5, Claude Sonnet 4, DeepSeek R1, Llama 3.3 70B, Kimi K2.5 |
+| `OpenClawVersion` | `2026.4.27` | OpenClaw version. `2026.3.24` (no model approval needed, WeChat compatible), `2026.4.5` / `2026.4.27` (auto-discovery, embeddings), or `latest` |
+| `InstanceType` | `c7g.large` | EC2 instance type. Graviton (ARM) recommended. c7g = compute-optimized (recommended, 2 vCPU for Node.js + sandbox), r7g/r6g = memory-optimized, t4g = burstable. 14 ARM + 7 x86 instance types available |
+| `CreateVPCEndpoints` | `false` | Create VPC endpoints for private network access to Bedrock and SSM (~$51/mo for 9 interface endpoints). Default off to minimize cost - traffic goes via NAT Gateway instead |
+| `EnableMonitoring` | `true` | Enable CloudWatch monitoring, health checks, auto-recovery, and log shipping (+~$4/mo) |
+| `EnableSandbox` | `true` | Install Docker for sandboxed execution (recommended for group chats) |
+| `EnableDataProtection` | `false` | Retain data volume when stack is deleted (protects against accidental data loss) |
+| `EnablePublicAccess` | `false` | Enable public access via ALB + CloudFront (~$25/mo). When disabled, access via SSM Session Manager only |
+| `EnableWAF` | `true` | Enable AWS WAF for CloudFront (Layer 7 DDoS protection, SQL injection, XSS, rate limiting, ~$10/mo). **⚠️ IMPORTANT: WAF only works in us-east-1.** If you deploy in other regions (e.g., us-west-2, ap-northeast-1, eu-west-1), the WAF will be silently skipped and you won't get Layer 7 protection. Deploy in us-east-1 to enable WAF, or accept that other regions only get Shield Standard (Layer 3/4 DDoS protection). |
+| `AllowedCountries` | _(empty)_ | CloudFront geographic restrictions. Leave empty (default) to allow worldwide access, or specify comma-separated ISO 3166-1 alpha-2 country codes to restrict access to specific countries (e.g., `AU,US,GB,JP`) |
 
 ---
 
@@ -386,6 +406,19 @@ Uses SiliconFlow (DeepSeek, Qwen, GLM) instead of Bedrock. Requires a SiliconFlo
 | **Supply-chain protection** | Docker via GPG-signed repos, NVM via download-then-execute (no `curl \| sh`) |
 | **Docker Sandbox** | Isolates code execution in group chats |
 | **CloudTrail** | Every Bedrock API call audited |
+
+### ⚠️ WAF Regional Limitation
+
+AWS WAF for CloudFront distributions **must be created in us-east-1** due to CloudFront being a global service. This means:
+
+- ✅ **Deploy in us-east-1**: Full WAF protection (SQL injection, XSS, rate limiting, bad inputs)
+- ⚠️ **Deploy in other regions** (us-west-2, ap-northeast-1, eu-west-1, etc.): WAF is **silently skipped**
+  - You still get AWS Shield Standard (Layer 3/4 DDoS protection) — always enabled, no cost
+  - You still get CloudFront managed prefix list (ALB only accepts traffic from CloudFront)
+  - You still get custom header validation (prevents direct ALB access)
+  - You **DON'T get** Layer 7 WAF protections (SQL injection, XSS, rate limiting)
+
+**Recommendation**: If Layer 7 WAF is critical for your use case, deploy the stack in us-east-1. Your EC2 instance and Bedrock requests will still be regional (low latency), only the CloudFront WAF needs to be in us-east-1.
 
 **[→ Full Security Guide](SECURITY.md)**
 
