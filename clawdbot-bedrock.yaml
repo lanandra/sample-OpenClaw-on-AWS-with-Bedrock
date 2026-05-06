@@ -628,36 +628,6 @@ Resources:
       SecurityGroupIds:
         - !Ref VPCEndpointSecurityGroup
 
-  # CloudFormation VPC Endpoint (for stack signaling)
-  CloudFormationVPCEndpoint:
-    Type: AWS::EC2::VPCEndpoint
-    Condition: CreateEndpoints
-    Properties:
-      VpcId: !Ref OpenClawVPC
-      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.cloudformation'
-      VpcEndpointType: Interface
-      PrivateDnsEnabled: true
-      SubnetIds:
-        - !Ref PrivateSubnet
-        - !Ref PrivateSubnet2
-      SecurityGroupIds:
-        - !Ref VPCEndpointSecurityGroup
-
-  # EC2 VPC Endpoint (for describe-tags API calls)
-  EC2VPCEndpoint:
-    Type: AWS::EC2::VPCEndpoint
-    Condition: CreateEndpoints
-    Properties:
-      VpcId: !Ref OpenClawVPC
-      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ec2'
-      VpcEndpointType: Interface
-      PrivateDnsEnabled: true
-      SubnetIds:
-        - !Ref PrivateSubnet
-        - !Ref PrivateSubnet2
-      SecurityGroupIds:
-        - !Ref VPCEndpointSecurityGroup
-
   # ==================== IAM Role ====================
   OpenClawInstanceRole:
     Type: AWS::IAM::Role
@@ -1908,17 +1878,10 @@ Outputs:
 
   CloudFrontURL:
     Condition: EnablePublic
-    Description: "PUBLIC ACCESS URL (HTTPS). Replace <token> with the value from the output 'GetToken'"
+    Description: "OpenClaw Public Access URL (HTTPS). Replace <token> with the value from the output 'GetToken'"
     Value: !Sub
       - "https://${Domain}/?token=<token>"
       - Domain: !GetAtt OpenClawCloudFrontDistribution.DomainName
-
-  ALBURL:
-    Condition: EnablePublic
-    Description: "ALB URL (HTTP) - Replace <token> with the value from the output 'GetToken'. Not secured, for testing/debugging only (bypasses CloudFront)."
-    Value: !Sub
-      - "http://${Domain}/?token=<token>"
-      - Domain: !GetAtt OpenClawALB.DNSName
 
   Step1InstallSSMPlugin:
     Condition: DisablePublic
@@ -1991,12 +1954,12 @@ Outputs:
 
   S3BucketNameRetained:
     Condition: ProtectData
-    Description: "S3 bucket name (retained on stack delete)"
+    Description: "S3 bucket name that interacts with OpenClaw (retained on stack delete)"
     Value: !Ref OpenClawS3BucketRetained
 
   S3BucketNameNotRetained:
     Condition: DeleteData
-    Description: "S3 bucket name (deleted with stack)"
+    Description: "S3 bucket name that interacts with OpenClaw (deleted with stack)"
     Value: !Ref OpenClawS3BucketNotRetained
 
   SecurityFeatures:

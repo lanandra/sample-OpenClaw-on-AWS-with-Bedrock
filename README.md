@@ -29,9 +29,8 @@ Deploy in 8 minutes. Access from your phone.
 ### One-Click Deploy
 
 1. Click "Launch Stack" for your region
-2. Select an EC2 key pair
-3. Wait ~8 minutes
-4. Check the Outputs tab
+2. Wait ~8 minutes
+3. Check the Outputs tab
 
 | Region | Launch |
 |--------|--------|
@@ -40,7 +39,7 @@ Deploy in 8 minutes. Access from your phone.
 | **EU (Ireland)** | [![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks/create/review?stackName=openclaw-bedrock&templateURL=https://sharefile-jiade.s3.cn-northwest-1.amazonaws.com.cn/clawdbot-bedrock.yaml) |
 | **Asia Pacific (Tokyo)** | [![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home?region=ap-northeast-1#/stacks/create/review?stackName=openclaw-bedrock&templateURL=https://sharefile-jiade.s3.cn-northwest-1.amazonaws.com.cn/clawdbot-bedrock.yaml) |
 
-> **Prerequisites**: Create an EC2 key pair in your target region. Bedrock model access is automatic — no manual enablement required.
+> **Prerequisites**: Bedrock model access is automatic — no manual enablement required. No SSH key needed — access via SSM Session Manager only.
 
 ### After Deployment
 
@@ -81,7 +80,6 @@ echo "http://localhost:18789/?token=$TOKEN"
 aws cloudformation create-stack \
   --stack-name openclaw-bedrock \
   --template-body file://clawdbot-bedrock.yaml \
-  --parameters ParameterKey=KeyPairName,ParameterValue=your-keypair \
   --capabilities CAPABILITY_IAM \
   --region us-west-2
 
@@ -189,59 +187,78 @@ Switch models with one CloudFormation parameter — no code changes:
 
 ### Typical Monthly Cost (Light Usage)
 
-| Component | Cost | Optional |
-|-----------|------|----------|
-| EC2 (c7g.large, Graviton) | ~$58 | Default |
-| EBS (30GB gp3 x2) | ~$4.80 | Required |
-| NAT Gateway | ~$33 | Required (EC2 in private subnet) |
-| CloudWatch Monitoring | ~$4 | ✅ Disable to save $4/mo |
-| VPC Endpoints (9 interface) | ~$51 | ✅ Enable for private network (+$51/mo) |
-| ALB + CloudFront | ~$25 | ✅ Enable for public access (+$25/mo) |
-| AWS WAF | ~$10 | ✅ Only in us-east-1 (+$10/mo) |
-| Bedrock (Nova 2 Lite, ~100 conv/day) | $5-8 | Pay-per-use |
-| **Total (default config)** | **$96-100/mo** | EC2 + NAT + monitoring + Bedrock |
-| **Total (minimal config, monitoring OFF)** | **$91-96/mo** | Save $4/mo by disabling CloudWatch |
-| **Total (VPC Endpoints ON)** | **$146-151/mo** | Add $51/mo for private network |
-| **Total (public access + WAF, us-east-1)** | **$180-190/mo** | Full security stack with public access |
+| Component | Cost (us-west-2) | Optional |
+|-----------|------------------|----------|
+| EC2 (c7g.large, Graviton) | ~$53 | Default (2 vCPU, 4GB RAM) |
+| EBS (30GB gp3 x2) | $4.80 | Required (root + data volumes) |
+| NAT Gateway | ~$34 | Required (EC2 in private subnet, includes ~40GB data) |
+| CloudWatch Monitoring | ~$4 | ✅ Disable to save ~$4/mo |
+| VPC Endpoints (6 interface) | ~$88 | ✅ Enable for private network (+~$88/mo) |
+| ALB + CloudFront | $22.80 | ✅ Enable for public access (+$22.80/mo) |
+| AWS WAF | ~$10 | ✅ Only if deploy to us-east-1 (+~$10/mo) |
+| Bedrock (Nova 2 Lite, ~100 conv/day) | $5.55 | Pay-per-use (~6M input + 1.5M output tokens/mo) |
+| **Total (default: VPCe OFF, monitoring ON)** | **~$101/mo** | EC2 + NAT + CloudWatch + Bedrock |
+| **Total (minimal: VPCe OFF, monitoring OFF)** | **~$97/mo** | Save ~$4/mo by disabling CloudWatch |
+| **Total (VPC Endpoints ON)** | **~$185/mo** | Add ~$88/mo for 6 interface endpoints across 2 AZs |
+| **Total (public access, no WAF)** | **~$124/mo** | Add $22.80/mo (ALB + CloudFront) |
+| **Total (public + VPCe, no WAF)** | **~$212/mo** | Add $111/mo (VPCe + public access) |
+| **Total (full security: public + VPCe + WAF, us-east-1)** | **~$222/mo** | Add $121/mo (full security stack) |
 
-> **Cost optimization**: Use `t4g.medium` ($24/mo) or `r7g.medium` ($30/mo, 8GB RAM) instead of c7g.large to save ~$30/mo. Enable VPC Endpoints only if you need private network routing (adds $51/mo).
+> **Cost optimization**: Use `t4g.medium` ($24/mo) or `r7g.medium` ($30/mo, 8GB RAM) instead of c7g.large to save ~$30/mo. Enable VPC Endpoints only if you need private network routing (adds ~$88/mo).
 
 **Always included at no extra cost:**
 - 2GB swap (prevents OOM crashes)
-- Health check cron (port + HTTP + channel connectivity)
-- OS security patches (unattended-upgrades)
-- IMDSv2 enforcement
-- `openclaw doctor --fix` post-install
-- systemd memory limits (graceful restart before OOM)
-- NAT Gateway (required for EC2 in private subnet)
+- Health check cron (port + HTTP + channel connectivity, every 5 min)
+- OS security patches (unattended-upgrades, automatic)
+- IMDSv2 enforcement (HttpTokens: required, no v1 fallback)
+- `openclaw doctor --fix` post-install validation
+- systemd memory limits (graceful restart before OOM at 80% memory)
+- NAT Gateway (required for EC2 in private subnet, included in base cost)
+- Node.js 22.22.0 pinned (prevents breakage from bad releases)
+- S3 Gateway VPC Endpoint (free, no hourly charge)
 
-### Cost Breakdown by Configuration
+**Pricing notes:**
+- All costs based on **AWS Official Pricing API** for **us-west-2** (accessed May 2026)
+- EC2 c7g.large: **$0.0725/hour** = **~$53/month** (verified via AWS Pricing API)
+- VPC Interface Endpoints: **$0.01/hour/AZ** × 2 AZs = **$14.60/month per endpoint**
+- NAT Gateway: **$0.045/hour** = **$32.85/month** + **$0.045/GB** data processing (~$1.80/mo)
+- Full cost breakdown: [COST_BREAKDOWN_OFFICIAL.md](COST_BREAKDOWN_OFFICIAL.md)
+
+### Cost Breakdown by Configuration (Official AWS Pricing)
 
 | Configuration | Monthly Cost | What You Get |
 |--------------|-------------|--------------|
-| **Default (VPCe OFF, monitoring ON)** | $96-100 | EC2 + NAT Gateway + CloudWatch + Bedrock. Traffic via NAT Gateway. SSM-only access. |
-| **Minimal (VPCe OFF, monitoring OFF)** | $91-96 | Above minus CloudWatch monitoring. Save $4/mo. |
-| **Private Network (VPCe ON)** | $146-151 | Default + 9 VPC endpoints for private AWS network routing. Add $51/mo. |
-| **Public Access (no WAF, any region)** | $170-180 | Above + ALB + CloudFront. Add $25/mo. No Layer 7 WAF. |
-| **Full Security (public + WAF, us-east-1 only)** | $180-190 | Above + AWS WAF (SQL injection, XSS, rate limiting). Add $10/mo. |
+| **Default (VPCe OFF, monitoring ON)** | **~$101** | EC2 c7g.large (~$53) + EBS 60GB ($4.80) + NAT Gateway (~$34) + CloudWatch (~$4) + Bedrock Nova 2 Lite ($5.55). Traffic via NAT Gateway to AWS public endpoints (still encrypted via TLS). SSM-only access. |
+| **Minimal (VPCe OFF, monitoring OFF)** | **~$98** | Above minus CloudWatch monitoring. Save ~$4/mo. Lose auto-recovery, health alarms, log shipping. |
+| **Private Network (VPCe ON, monitoring ON)** | **~$189** | Default + 6 interface VPC endpoints across 2 AZs (**$14.60/endpoint/mo × 6 = $87.60**): Bedrock Runtime, Bedrock Mantle, SSM, SSM Messages, EC2 Messages, CloudWatch Logs. S3 Gateway endpoint free. Add **~$88/mo** (includes data processing). **All Bedrock + SSM traffic stays on AWS private network (never touches internet).** |
+| **Public Access (VPCe OFF, no WAF)** | **~$124** | Default + ALB ($22.27) + CloudFront ($0.53). Add **$22.80/mo**. HTTPS via CloudFront, but CloudFront→ALB uses HTTP (not end-to-end TLS). No Layer 7 WAF. |
+| **Public + Private Network (VPCe ON, no WAF)** | **~$212** | Above + 6 VPC endpoints. Add **$111/mo** total. |
+| **Full Security (public + VPCe + WAF, us-east-1 only)** | **~$222** | Above + AWS WAF (~$10): Web ACL + 5 managed rules (SQL injection, XSS, bad inputs, Linux protection, rate limiting 1000 req/5min). Add **$121/mo** total. ⚠️ **WAF only works in us-east-1** — other regions silently skip WAF (no Layer 7 protection, only Shield Standard Layer 3/4). |
 
 ### Save Money
 
-- **Use Nova 2 Lite instead of Claude** → 90% cheaper inference ($0.30 vs $3-15 per 1M input tokens)
-- **Use Graviton (ARM) instead of x86** → 20-40% cheaper EC2
-- **Use smaller instance type** → t4g.medium ($24/mo) or r7g.medium ($30/mo) saves ~$30/mo vs c7g.large
-- **Default config (VPCe OFF)** → saves $51/mo vs private network (traffic via NAT Gateway instead)
-- **Skip public access** (`EnablePublicAccess=false`) → saves $25/mo (no ALB + CloudFront, use SSM Session Manager instead)
-- **Disable monitoring** (`EnableMonitoring=false`) → saves $4/mo (lose auto-recovery, health alarms, log shipping)
-- **AWS Savings Plans** → 30-40% off EC2 for 1-3 year commitment
+- **Use Nova 2 Lite instead of Claude** → 90% cheaper inference ($0.30 vs $3-15 per 1M input tokens). **Already default** ✅
+- **Use Graviton (ARM) instead of x86** → 20-40% cheaper EC2. c7g.large (~$53/mo) vs r5.large x86 ($92/mo). **Already default** ✅
+- **Use smaller instance type** → **t4g.medium** ($24.53/mo, 4GB RAM) **saves $28.40/mo** (54% cheaper) vs c7g.large. Trade-off: Less CPU for Docker sandbox. Good for light usage (<10 users).
+- **Use r7g.medium** → $39.13/mo (8GB RAM) **saves $13.80/mo** (26% cheaper) vs c7g.large. More memory for plugins/embeddings, but only 1 vCPU.
+- **Default config (VPCe OFF)** → **saves ~$88/mo** vs private network. Traffic goes via NAT Gateway to AWS public endpoints (still encrypted via TLS). **Best cost/benefit ratio for most use cases.** ✅
+- **Skip public access** (`EnablePublicAccess=false`) → **saves $22.80/mo** (no ALB + CloudFront). Use SSM Session Manager only. **Already default** ✅
+- **Disable monitoring** (`EnableMonitoring=false`) → **saves ~$4/mo** (lose auto-recovery alarms, health metrics, log shipping to CloudWatch). Not recommended for production.
+- **AWS Savings Plans** → **30-40% off EC2** for 1-3 year commitment. c7g.large: ~$53/mo → **~$31.76-37.05/mo** (save $15-21/mo). Must commit to instance family (c7g). Best for long-term deployments.
 
 ### vs. Alternatives
 
 | Option | Cost | What you get |
 |--------|------|-------------|
-| ChatGPT Plus | $20/person/month | Single user, no integrations |
-| This project (5 users) | ~$10/person/month | Multi-user, WhatsApp/Telegram/Discord, full control |
-| Local Mac Mini | $0 server + $20-30 API | Hardware cost, manage yourself |
+| ChatGPT Plus | $20/person/month | Single user, no integrations, web UI only |
+| **This project (1 user)** | **$101/month** | 5x more expensive, but full control + integrations |
+| **This project (5 users)** | **$20.20/person/month** | Break-even with ChatGPT, multi-user, WhatsApp/Telegram/Discord/Slack |
+| **This project (10 users)** | **$10.10/person/month** | 50% cheaper, economy of scale |
+| **This project (20 users)** | **$5.05/person/month** | 75% cheaper, way more features |
+| **This project (50 users)** | **$2.02/person/month** | 90% cheaper, enterprise scale |
+| Local Mac Mini | $0 server + $20-30 API | Hardware cost, manage yourself, electricity cost |
+
+**Break-even point: ~5 users** (same cost as ChatGPT Plus)
 
 ---
 
@@ -249,31 +266,33 @@ Switch models with one CloudFormation parameter — no code changes:
 
 ### Instance Types
 
-| Type | Monthly | RAM | Architecture | Use case |
-|------|---------|-----|-------------|----------|
-| t4g.small | $12 | 2GB | Graviton ARM | Personal (minimal) |
-| t4g.medium | $24 | 4GB | Graviton ARM | Small teams |
-| t4g.large | $48 | 8GB | Graviton ARM | Medium teams |
-| **c7g.large** | **$58** | **4GB** | **Graviton ARM** | **Recommended (default)** |
-| r7g.medium | $30 | 8GB | Graviton ARM | Memory-optimized alternative |
-| r7g.large | $60 | 16GB | Graviton ARM | Heavy usage / plugins |
-| c7g.large | $58 | 4GB | Graviton ARM | Compute-intensive |
-| r5.large | $91 | 16GB | x86 | x86 + memory |
+| Type | Monthly (us-west-2) | vCPU | RAM | Architecture | Use case |
+|------|---------------------|------|-----|-------------|----------|
+| t4g.small | $12 | 2 | 2GB | Graviton ARM | Personal (minimal), burstable |
+| **t4g.medium** | **$24.53** | **2** | **4GB** | **Graviton ARM** | **Best value (save $28.40/mo vs c7g.large)** |
+| t4g.large | $49 | 2 | 8GB | Graviton ARM | Medium teams, burstable |
+| **c7g.large** | **~$53** | **2** | **4GB** | **Graviton ARM** | **Default (compute-optimized for Node.js + Docker)** |
+| c7g.xlarge | $106 | 4 | 8GB | Graviton ARM | Heavy compute workloads |
+| **r7g.medium** | **$39.13** | **1** | **8GB** | **Graviton ARM** | **Memory-optimized (save $13.80/mo, good for plugins/embeddings)** |
+| r7g.large | $78 | 2 | 16GB | Graviton ARM | Heavy usage / many plugins |
+| r5.large | $92 | 2 | 16GB | x86 | x86 compatibility + memory |
+
+**Cost source**: AWS Pricing API (accessed May 2026)
 
 ### Parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `OpenClawModel` | `global.amazon.nova-2-lite-v1:0` | Bedrock model ID - Nova 2 Lite offers best price-performance for everyday tasks. 10 models available: Nova 2 Lite, Claude Sonnet 4.5, Nova Pro, Claude Opus 4.6, Claude Opus 4.5, Claude Haiku 4.5, Claude Sonnet 4, DeepSeek R1, Llama 3.3 70B, Kimi K2.5 |
-| `OpenClawVersion` | `2026.4.27` | OpenClaw version. `2026.3.24` (no model approval needed, WeChat compatible), `2026.4.5` / `2026.4.27` (auto-discovery, embeddings), or `latest` |
-| `InstanceType` | `c7g.large` | EC2 instance type. Graviton (ARM) recommended. c7g = compute-optimized (recommended, 2 vCPU for Node.js + sandbox), r7g/r6g = memory-optimized, t4g = burstable. 14 ARM + 7 x86 instance types available |
-| `CreateVPCEndpoints` | `false` | Create VPC endpoints for private network access to Bedrock and SSM (~$51/mo for 9 interface endpoints). Default off to minimize cost - traffic goes via NAT Gateway instead |
-| `EnableMonitoring` | `true` | Enable CloudWatch monitoring, health checks, auto-recovery, and log shipping (+~$4/mo) |
-| `EnableSandbox` | `true` | Install Docker for sandboxed execution (recommended for group chats) |
-| `EnableDataProtection` | `false` | Retain data volume when stack is deleted (protects against accidental data loss) |
-| `EnablePublicAccess` | `false` | Enable public access via ALB + CloudFront (~$25/mo). When disabled, access via SSM Session Manager only. **⚠️ Security Note**: CloudFront → ALB connection uses HTTP (not HTTPS), meaning origin traffic is unencrypted. This is an accepted tradeoff for simplicity. For full end-to-end encryption, add ACM certificate + HTTPS ALB listener (see SECURITY.md). |
-| `EnableWAF` | `true` | Enable AWS WAF for CloudFront (Layer 7 DDoS protection, SQL injection, XSS, rate limiting, ~$10/mo). **⚠️ IMPORTANT: WAF only works in us-east-1.** If you deploy in other regions (e.g., us-west-2, ap-northeast-1, eu-west-1), the WAF will be silently skipped and you won't get Layer 7 protection. Deploy in us-east-1 to enable WAF, or accept that other regions only get Shield Standard (Layer 3/4 DDoS protection). |
-| `AllowedCountries` | _(empty)_ | CloudFront geographic restrictions. Leave empty (default) to allow worldwide access, or specify comma-separated ISO 3166-1 alpha-2 country codes to restrict access to specific countries (e.g., `AU,US,GB,JP`) |
+| `OpenClawVersion` | `2026.4.27` | OpenClaw version. `2026.3.24` (no model approval needed, WeChat compatible), `2026.4.5` / `2026.4.10` / `2026.4.27` (auto-discovery, embeddings), or `latest` (not recommended for production) |
+| `InstanceType` | `c7g.large` | EC2 instance type. Graviton (ARM) recommended. **c7g = compute-optimized** (recommended, 2 vCPU for Node.js + Docker sandbox), **r7g/r6g = memory-optimized** (plugins, embeddings), **t4g = burstable** (cost-optimized). 14 ARM + 7 x86 instance types available |
+| `CreateVPCEndpoints` | `false` | Create VPC endpoints for private network access (**~~$88/mo** for 6 interface endpoints across 2 AZs: Bedrock Runtime, Bedrock Mantle (conditional on region), SSM, SSM Messages, EC2 Messages, CloudWatch Logs. Each endpoint: **$0.01/hour/AZ × 2 AZs × 730 hours = $14.60/mo**. Plus ~$0.75/mo data processing. S3 Gateway endpoint always free). **Default OFF to minimize cost** — traffic goes via NAT Gateway to AWS public HTTPS endpoints instead (still encrypted via TLS, no security downside for most use cases). Enable only if compliance requires private network routing (adds **~$88/mo**). |
+| `EnableMonitoring` | `true` | Enable CloudWatch monitoring, EC2 auto-recovery + reboot alarms, metrics (memory, disk, swap), and log shipping (+~$4/mo). **Recommended ON** for production |
+| `EnableSandbox` | `true` | Install Docker for sandboxed command execution (recommended for group chats and untrusted code). Adds ~500MB disk usage |
+| `EnableDataProtection` | `false` | Retain both EBS volume and S3 bucket when stack is deleted (protects against accidental data loss). **Set to true for production** |
+| `EnablePublicAccess` | `false` | Enable public HTTPS access via ALB + CloudFront (~$25/mo). When disabled, access via SSM Session Manager only (secure, no open ports). **⚠️ Security Note**: CloudFront → ALB connection uses HTTP (not HTTPS), meaning origin traffic is unencrypted. This is an accepted tradeoff for simplicity. For full end-to-end encryption, add ACM certificate + HTTPS ALB listener (see SECURITY.md). |
+| `EnableWAF` | `true` | Enable AWS WAF for CloudFront (Layer 7 DDoS protection, SQL injection, XSS, bad inputs, rate limiting 1000 req/5min, ~$10/mo). **⚠️ CRITICAL LIMITATION: WAF only works in us-east-1.** If you deploy in other regions (e.g., us-west-2, ap-northeast-1, eu-west-1), the WAF will be silently skipped and you won't get Layer 7 protection. Deploy in us-east-1 to enable WAF, or accept that other regions only get Shield Standard (Layer 3/4 DDoS protection). |
+| `AllowedCountries` | _(empty)_ | CloudFront geographic restrictions (geo-blocking). Leave empty (default) to allow worldwide access, or specify comma-separated ISO 3166-1 alpha-2 country codes to restrict access to specific countries only (e.g., `AU,US,GB,JP`). Useful for compliance (GDPR, data residency) |
 
 ---
 
@@ -398,14 +417,18 @@ Uses SiliconFlow (DeepSeek, Qwen, GLM) instead of Bedrock. Requires a SiliconFlo
 
 | Layer | What it does |
 |-------|-------------|
-| **IAM Roles** | No API keys — automatic credential rotation |
-| **IMDSv2 Enforced** | Instance metadata requires secure token (no v1 fallback) |
-| **SSM Session Manager** | No public ports, session logging |
-| **VPC Endpoints** | Bedrock traffic stays on private network |
-| **SSM Parameter Store** | Gateway token stored as SecureString, never on disk |
-| **Supply-chain protection** | Docker via GPG-signed repos, NVM via download-then-execute (no `curl \| sh`) |
-| **Docker Sandbox** | Isolates code execution in group chats |
-| **CloudTrail** | Every Bedrock API call audited |
+| **No SSH** | Zero SSH keys, zero SSH ports. SSM Session Manager only. |
+| **IAM Roles** | No API keys — automatic credential rotation via EC2 instance profile |
+| **IMDSv2 Enforced** | Instance metadata requires secure token (`HttpTokens: required`, no v1 fallback) |
+| **SSM Session Manager** | No public ports (22/3389/18789), session logging, encrypted tunnel |
+| **VPC Endpoints (optional)** | Bedrock + SSM traffic stays on AWS private network (never touches internet) |
+| **SSM Parameter Store** | Gateway token stored as SecureString (KMS-encrypted), never written to disk |
+| **Supply-chain protection** | Docker via GPG-signed repos, NVM via download-then-execute (no `curl \| sh`), npm registry hardcoded |
+| **Docker Sandbox** | Isolates code execution in group chats (prevents host compromise) |
+| **CloudTrail** | Every Bedrock API call audited (who, when, what model, what input/output) |
+| **Private subnet + NAT** | EC2 in private subnet, no public IP, outbound via NAT Gateway |
+| **Security groups** | Minimal ingress (ALB only if public access enabled), full egress |
+| **Network ACLs** | Stateless firewall on private subnets (HTTPS, DNS, ephemeral only) |
 
 ### ⚠️ WAF Regional Limitation
 
@@ -461,11 +484,13 @@ Optional extensions for OpenClaw:
 
 ---
 
-## SSH-like Access via SSM
+## Shell Access via SSM (No SSH)
+
+The instance has **no SSH key** and **no SSH port** open. All access is via SSM Session Manager.
 
 ```bash
-# Start interactive session
-aws ssm start-session --target i-xxxxxxxxx --region us-east-1
+# Start interactive session (get instance ID from CloudFormation Outputs)
+aws ssm start-session --target i-xxxxxxxxx --region us-west-2
 
 # Switch to ubuntu user
 sudo su - ubuntu
@@ -473,7 +498,21 @@ sudo su - ubuntu
 # Run OpenClaw commands
 openclaw --version
 openclaw gateway status
+openclaw doctor --fix
+
+# View logs
+journalctl -u openclaw-gateway.service -f
+tail -f ~/.openclaw/*.log
+
+# Alternative: Use EC2 Console > right-click instance > Connect > Session Manager
 ```
+
+**Why no SSH?** SSM is more secure:
+- No exposed port 22 (reduces attack surface)
+- Automatic session logging to CloudTrail/S3
+- Temporary credentials (no long-lived SSH keys)
+- IAM-based access control (no key rotation)
+- Encrypted tunnels (AES-256)
 
 ---
 
