@@ -199,7 +199,7 @@ Switch models with one CloudFormation parameter — no code changes:
 | Bedrock (Nova 2 Lite, ~100 conv/day) | $5.55 | Pay-per-use (~6M input + 1.5M output tokens/mo) |
 | **Total (default: VPCe OFF, monitoring ON)** | **~$101/mo** | EC2 + NAT + CloudWatch + Bedrock |
 | **Total (minimal: VPCe OFF, monitoring OFF)** | **~$97/mo** | Save ~$4/mo by disabling CloudWatch |
-| **Total (VPC Endpoints ON)** | **~$185/mo** | Add ~$88/mo for 6 interface endpoints across 2 AZs |
+| **Total (VPC Endpoints ON)** | **~$189/mo** | Add ~$88/mo for 6 interface endpoints across 2 AZs |
 | **Total (public access, no WAF)** | **~$124/mo** | Add $22.80/mo (ALB + CloudFront) |
 | **Total (public + VPCe, no WAF)** | **~$212/mo** | Add $111/mo (VPCe + public access) |
 | **Total (full security: public + VPCe + WAF, us-east-1)** | **~$222/mo** | Add $121/mo (full security stack) |
@@ -222,14 +222,13 @@ Switch models with one CloudFormation parameter — no code changes:
 - EC2 c7g.large: **$0.0725/hour** = **~$53/month** (verified via AWS Pricing API)
 - VPC Interface Endpoints: **$0.01/hour/AZ** × 2 AZs = **$14.60/month per endpoint**
 - NAT Gateway: **$0.045/hour** = **$32.85/month** + **$0.045/GB** data processing (~$1.80/mo)
-- Full cost breakdown: [COST_BREAKDOWN_OFFICIAL.md](COST_BREAKDOWN_OFFICIAL.md)
 
-### Cost Breakdown by Configuration (Official AWS Pricing)
+### Cost Breakdown by Configuration
 
 | Configuration | Monthly Cost | What You Get |
 |--------------|-------------|--------------|
-| **Default (VPCe OFF, monitoring ON)** | **~$101** | EC2 c7g.large (~$53) + EBS 60GB ($4.80) + NAT Gateway (~$34) + CloudWatch (~$4) + Bedrock Nova 2 Lite ($5.55). Traffic via NAT Gateway to AWS public endpoints (still encrypted via TLS). SSM-only access. |
-| **Minimal (VPCe OFF, monitoring OFF)** | **~$98** | Above minus CloudWatch monitoring. Save ~$4/mo. Lose auto-recovery, health alarms, log shipping. |
+| **Default (VPCe OFF, monitoring ON)** | **~$101** | EC2 c7g.large ($53) + EBS 60GB ($4.80) + NAT Gateway ($34) + CloudWatch ($4) + Bedrock Nova 2 Lite ($5.55). Traffic via NAT Gateway to AWS public endpoints (still encrypted via TLS). SSM-only access. |
+| **Minimal (VPCe OFF, monitoring OFF)** | **~$97** | Above minus CloudWatch monitoring. Save ~$4/mo. Lose auto-recovery, health alarms, log shipping. |
 | **Private Network (VPCe ON, monitoring ON)** | **~$189** | Default + 6 interface VPC endpoints across 2 AZs (**$14.60/endpoint/mo × 6 = $87.60**): Bedrock Runtime, Bedrock Mantle, SSM, SSM Messages, EC2 Messages, CloudWatch Logs. S3 Gateway endpoint free. Add **~$88/mo** (includes data processing). **All Bedrock + SSM traffic stays on AWS private network (never touches internet).** |
 | **Public Access (VPCe OFF, no WAF)** | **~$124** | Default + ALB ($22.27) + CloudFront ($0.53). Add **$22.80/mo**. HTTPS via CloudFront, but CloudFront→ALB uses HTTP (not end-to-end TLS). No Layer 7 WAF. |
 | **Public + Private Network (VPCe ON, no WAF)** | **~$212** | Above + 6 VPC endpoints. Add **$111/mo** total. |
@@ -271,7 +270,7 @@ Switch models with one CloudFormation parameter — no code changes:
 | t4g.small | $12 | 2 | 2GB | Graviton ARM | Personal (minimal), burstable |
 | **t4g.medium** | **$24.53** | **2** | **4GB** | **Graviton ARM** | **Best value (save $28.40/mo vs c7g.large)** |
 | t4g.large | $49 | 2 | 8GB | Graviton ARM | Medium teams, burstable |
-| **c7g.large** | **~$53** | **2** | **4GB** | **Graviton ARM** | **Default (compute-optimized for Node.js + Docker)** |
+| **c7g.large** | **$53** | **2** | **4GB** | **Graviton ARM** | **Default (compute-optimized for Node.js + Docker)** |
 | c7g.xlarge | $106 | 4 | 8GB | Graviton ARM | Heavy compute workloads |
 | **r7g.medium** | **$39.13** | **1** | **8GB** | **Graviton ARM** | **Memory-optimized (save $13.80/mo, good for plugins/embeddings)** |
 | r7g.large | $78 | 2 | 16GB | Graviton ARM | Heavy usage / many plugins |
@@ -286,7 +285,7 @@ Switch models with one CloudFormation parameter — no code changes:
 | `OpenClawModel` | `global.amazon.nova-2-lite-v1:0` | Bedrock model ID - Nova 2 Lite offers best price-performance for everyday tasks. 10 models available: Nova 2 Lite, Claude Sonnet 4.5, Nova Pro, Claude Opus 4.6, Claude Opus 4.5, Claude Haiku 4.5, Claude Sonnet 4, DeepSeek R1, Llama 3.3 70B, Kimi K2.5 |
 | `OpenClawVersion` | `2026.4.27` | OpenClaw version. `2026.3.24` (no model approval needed, WeChat compatible), `2026.4.5` / `2026.4.10` / `2026.4.27` (auto-discovery, embeddings), or `latest` (not recommended for production) |
 | `InstanceType` | `c7g.large` | EC2 instance type. Graviton (ARM) recommended. **c7g = compute-optimized** (recommended, 2 vCPU for Node.js + Docker sandbox), **r7g/r6g = memory-optimized** (plugins, embeddings), **t4g = burstable** (cost-optimized). 14 ARM + 7 x86 instance types available |
-| `CreateVPCEndpoints` | `false` | Create VPC endpoints for private network access (**~~$88/mo** for 6 interface endpoints across 2 AZs: Bedrock Runtime, Bedrock Mantle (conditional on region), SSM, SSM Messages, EC2 Messages, CloudWatch Logs. Each endpoint: **$0.01/hour/AZ × 2 AZs × 730 hours = $14.60/mo**. Plus ~$0.75/mo data processing. S3 Gateway endpoint always free). **Default OFF to minimize cost** — traffic goes via NAT Gateway to AWS public HTTPS endpoints instead (still encrypted via TLS, no security downside for most use cases). Enable only if compliance requires private network routing (adds **~$88/mo**). |
+| `CreateVPCEndpoints` | `false` | Create VPC endpoints for private network access (**~$88/mo** for 6 interface endpoints across 2 AZs: Bedrock Runtime, Bedrock Mantle (conditional on region), SSM, SSM Messages, EC2 Messages, CloudWatch Logs. Each endpoint: **$0.01/hour/AZ × 2 AZs × 730 hours = $14.60/mo**. Plus ~$0.75/mo data processing. S3 Gateway endpoint always free). **Default OFF to minimize cost**. Traffic goes via NAT Gateway to AWS public HTTPS endpoints instead (still encrypted via TLS, no security downside for most use cases). Enable only if compliance requires private network routing (adds **$88/mo**). |
 | `EnableMonitoring` | `true` | Enable CloudWatch monitoring, EC2 auto-recovery + reboot alarms, metrics (memory, disk, swap), and log shipping (~$4/mo). **Recommended ON** for production |
 | `EnableSandbox` | `true` | Install Docker for sandboxed command execution (recommended for group chats and untrusted code). Adds ~500MB disk usage |
 | `EnableDataProtection` | `false` | Retain both EBS volume and S3 bucket when stack is deleted (protects against accidental data loss). **Set to true for production** |
