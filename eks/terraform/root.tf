@@ -29,8 +29,7 @@ module "eks_cluster" {
   core_node_count     = var.core_node_count
 
   # Explicitly add the Terraform caller (e.g. CodeBuild role) as cluster admin.
-  # enable_cluster_creator_admin_permissions=true should handle this, but doesn't
-  # reliably work with assumed roles in some EKS module versions.
+  # enable_cluster_creator_admin_permissions=false, so we must do this manually.
   access_entries = merge(var.access_entries, {
     terraform_caller = {
       principal_arn = data.aws_iam_session_context.current.issuer_arn
@@ -45,6 +44,7 @@ module "eks_cluster" {
       }
     }
   })
+
   is_china_region = local.is_china_region
   partition       = local.partition
 
@@ -64,8 +64,6 @@ module "storage" {
   partition       = local.partition
 
   tags = local.tags
-
-  depends_on = [module.eks_cluster]
 }
 
 # =============================================================================
@@ -85,8 +83,6 @@ module "bedrock_iam" {
   partition       = local.partition
 
   tags = local.tags
-
-  depends_on = [module.eks_cluster]
 }
 
 # =============================================================================
@@ -98,8 +94,6 @@ module "operator" {
 
   cluster_name       = module.eks_cluster.cluster_name
   operator_namespace = local.operator_namespace
-  chart_repository   = local.chart_repository
-  ecr_host           = local.is_china_region ? local.ecr_host : ""
   is_china_region    = local.is_china_region
 
   tags = local.tags
@@ -108,7 +102,26 @@ module "operator" {
 }
 
 # =============================================================================
-# Optional: Kata Containers + Karpenter
+# Optional: Karpenter (node autoscaling)
+# =============================================================================
+
+module "karpenter" {
+  count  = var.enable_karpenter ? 1 : 0
+  source = "./modules/karpenter"
+
+  cluster_name      = module.eks_cluster.cluster_name
+  cluster_endpoint  = module.eks_cluster.cluster_endpoint
+  karpenter_version = var.karpenter_version
+  architecture      = var.architecture
+  partition         = local.partition
+
+  tags = local.tags
+
+  depends_on = [module.eks_cluster]
+}
+
+# =============================================================================
+# Optional: Kata Containers (hardware-isolated pods)
 # =============================================================================
 
 module "kata" {
@@ -122,18 +135,16 @@ module "kata" {
   kata_hypervisor     = var.kata_hypervisor
   kata_instance_types = local.kata_instance_types
   architecture        = var.architecture
-  enable_karpenter    = var.enable_karpenter
-  node_iam_role_name  = module.eks_cluster.node_iam_role_name
   vpc_cidr            = var.vpc_cidr
 
-  chart_repository = local.chart_repository
-  ecr_host         = local.is_china_region ? local.ecr_host : ""
-  is_china_region  = local.is_china_region
-  partition        = local.partition
+  karpenter_node_iam_role_name = try(module.karpenter[0].karpenter_node_iam_role_name, "")
+
+  is_china_region = local.is_china_region
+  partition       = local.partition
 
   tags = local.tags
 
-  depends_on = [module.eks_cluster]
+  depends_on = [module.karpenter]
 }
 
 # =============================================================================
@@ -152,9 +163,8 @@ module "networking" {
 
   enable_cloudfront = var.enable_cloudfront
 
-  chart_repository = local.chart_repository
-  is_china_region  = local.is_china_region
-  partition        = local.partition
+  is_china_region = local.is_china_region
+  partition       = local.partition
 
   tags = local.tags
 
@@ -169,9 +179,7 @@ module "monitoring" {
   count  = var.enable_monitoring ? 1 : 0
   source = "./modules/monitoring"
 
-  cluster_name     = module.eks_cluster.cluster_name
-  chart_repository = local.chart_repository
-  ecr_host         = local.is_china_region ? local.ecr_host : ""
+  cluster_name = module.eks_cluster.cluster_name
 
   tags = local.tags
 
@@ -190,11 +198,8 @@ module "litellm" {
   cluster_oidc_issuer = module.eks_cluster.oidc_issuer
   oidc_provider_arn   = module.eks_cluster.oidc_provider_arn
 
-  chart_repository  = local.chart_repository
-  ecr_host          = local.is_china_region ? local.ecr_host : ""
-  is_china_region   = local.is_china_region
-  partition         = local.partition
-  enable_monitoring = var.enable_monitoring
+  is_china_region = local.is_china_region
+  partition       = local.partition
 
   tags = local.tags
 
