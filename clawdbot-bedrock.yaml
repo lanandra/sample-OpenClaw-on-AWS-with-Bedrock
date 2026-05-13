@@ -999,26 +999,45 @@ Resources:
                     mkdir -p /data/openclaw
                     chown ubuntu:ubuntu /data/openclaw
 
-                    # Create ~/.openclaw symlink for CLI convenience (e.g. 'ls ~/.openclaw').
-                    # Set OPENCLAW_STATE_DIR to the real path so OpenClaw's exec approval
-                    # boundary check never traverses the symlink (security boundary requirement).
-                    # Remove existing file/dir/symlink to ensure clean state on re-runs.
-                    if [ -e /home/ubuntu/.openclaw ] || [ -L /home/ubuntu/.openclaw ]; then
+                    # Bind-mount /data/openclaw onto ~/.openclaw so:
+                    #  - OpenClaw sees a real directory at ~/.openclaw (no symlink)
+                    #    -- OpenClaw v2026.5.4+ refuses to traverse symlinks for
+                    #    exec-approvals.json and other security-critical paths (issue #99).
+                    #  - Data is physically stored on the EBS data volume at /data/openclaw.
+                    # Bind mount avoids both the symlink-rejection and the
+                    # OPENCLAW_STATE_DIR partial-coverage problem (some paths are hardcoded to ~/.openclaw).
+                    if mountpoint -q /home/ubuntu/.openclaw; then
+                      umount /home/ubuntu/.openclaw || true
+                    fi
+                    if [ -L /home/ubuntu/.openclaw ]; then
+                      rm -f /home/ubuntu/.openclaw
+                    elif [ -e /home/ubuntu/.openclaw ]; then
+                      # Preserve any existing files by moving them into /data/openclaw before remount
+                      shopt -s dotglob nullglob
+                      for f in /home/ubuntu/.openclaw/*; do
+                        mv -n "$f" /data/openclaw/ || true
+                      done
+                      shopt -u dotglob nullglob
                       rm -rf /home/ubuntu/.openclaw
                     fi
                     mkdir -p /home/ubuntu/.openclaw
-                    chown -h ubuntu:ubuntu /home/ubuntu/.openclaw
+                    chown ubuntu:ubuntu /home/ubuntu/.openclaw
+                    mount --bind /data/openclaw /home/ubuntu/.openclaw
 
-                    # Set OPENCLAW_STATE_DIR environment variable to point to real path
-                    # (not the symlink) for OpenClaw's security boundary checks
+                    # Persist bind mount across reboots
+                    if ! grep -q "/data/openclaw /home/ubuntu/.openclaw" /etc/fstab; then
+                      echo "/data/openclaw /home/ubuntu/.openclaw none bind 0 0" >> /etc/fstab
+                    fi
+
+                    # Also set OPENCLAW_STATE_DIR for completeness (some plugins still read it)
                     mkdir -p /home/ubuntu/.config/environment.d
-                    echo "OPENCLAW_STATE_DIR=/data/openclaw" > /home/ubuntu/.config/environment.d/openclaw.conf
+                    echo "OPENCLAW_STATE_DIR=/home/ubuntu/.openclaw" > /home/ubuntu/.config/environment.d/openclaw.conf
                     chown ubuntu:ubuntu /home/ubuntu/.config/environment.d/openclaw.conf
                   else
                     echo "FATAL: no data volume found — expected an EBS volume attached at /dev/nvme1n1, /dev/xvdf, or /dev/sdf"
                     exit 1
                   fi
-                  STATE_DIR=/data/openclaw
+                  STATE_DIR=/home/ubuntu/.openclaw
 
                   # System update
                   echo "[1/9] Updating system..."
@@ -1153,12 +1172,12 @@ Resources:
                     echo "export AWS_PROFILE=default"
                     echo "export OPENCLAW_MODEL=${OpenClawModel}"
                     echo "export OPENCLAW_USE_BEDROCK=true"
-                    echo "export OPENCLAW_STATE_DIR=/data/openclaw"
+                    echo "export OPENCLAW_STATE_DIR=/home/ubuntu/.openclaw"
                   } >> /home/ubuntu/.bashrc
 
                   # Also add to .profile so OPENCLAW_STATE_DIR is available in
                   # non-interactive login shells (e.g. 'sudo su - ubuntu')
-                  echo "export OPENCLAW_STATE_DIR=/data/openclaw" >> /home/ubuntu/.profile
+                  echo "export OPENCLAW_STATE_DIR=/home/ubuntu/.openclaw" >> /home/ubuntu/.profile
                   chown ubuntu:ubuntu /home/ubuntu/.profile
 
                   # Ensure .config is ubuntu-owned before gateway install runs
@@ -1465,7 +1484,7 @@ Resources:
                         }
                       }
                     }
-                    CWCONFIG
+                  CWCONFIG
                     /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json || echo "CloudWatch Agent config failed"
                   else
                     echo "[post] Skipping CloudWatch Agent (EnableMonitoring=false)..."
