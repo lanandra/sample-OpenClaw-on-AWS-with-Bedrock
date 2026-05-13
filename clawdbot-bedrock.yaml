@@ -244,7 +244,7 @@ Resources:
     DependsOn: OpenClawInstance
     Properties:
       Handle: !Ref OpenClawWaitHandle
-      Timeout: '900'
+      Timeout: '1200'
       Count: 1
 
   # ==================== VPC and Network ====================
@@ -1225,14 +1225,9 @@ Resources:
                     BIND_ADDRESS="0.0.0.0"
                     echo "Public access enabled - binding to 0.0.0.0"
 
-                    # Get CloudFront domain from stack outputs
-                    CLOUDFRONT_DOMAIN=$(aws cloudformation describe-stacks \
-                      --stack-name "${AWS::StackName}" \
-                      --region "${AWS::Region}" \
-                      --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontURL`].OutputValue' \
-                      --output text 2>/dev/null | grep -oP 'https://[^/]+' || echo "")
-
-                    if [ -n "$CLOUDFRONT_DOMAIN" ]; then
+                    # CloudFront domain from OPENCLAW_CF_DOMAIN env var (set in UserData via Fn::If)
+                    if [ -n "$OPENCLAW_CF_DOMAIN" ]; then
+                      CLOUDFRONT_DOMAIN="https://$OPENCLAW_CF_DOMAIN"
                       ALLOWED_ORIGINS="[\"$CLOUDFRONT_DOMAIN\"]"
                       echo "Configuring allowedOrigins: $ALLOWED_ORIGINS"
                     else
@@ -1558,24 +1553,28 @@ Resources:
             VolumeType: gp3
             DeleteOnTermination: true
       UserData:
-        Fn::Base64: !Sub |
-          #!/bin/bash
-          # Minimal bootstrap — installs cfn-init, then delegates to Metadata::Init
-          set -e
-          exec > >(tee /var/log/openclaw-bootstrap.log) 2>&1
-          echo "Bootstrap start: $(date)"
-          export DEBIAN_FRONTEND=noninteractive
-          apt-get update -q
-          apt-get install -y -q python3-pip
-          pip3 install --break-system-packages https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-py3-latest.tar.gz
-          CFN_INIT=$(which cfn-init 2>/dev/null || find /usr -name cfn-init 2>/dev/null | head -1)
-          if [ -z "$CFN_INIT" ]; then
-            echo "FATAL: cfn-init not found after install"
-            exit 1
-          fi
-          echo "Running cfn-init..."
-          $CFN_INIT -v --stack ${AWS::StackName} --resource OpenClawInstance --region ${AWS::Region} --configsets default
-          echo "Bootstrap complete: $(date)"
+        Fn::Base64:
+          Fn::Sub:
+            - |
+              #!/bin/bash
+              # Minimal bootstrap — installs cfn-init, then delegates to Metadata::Init
+              set -e
+              exec > >(tee /var/log/openclaw-bootstrap.log) 2>&1
+              echo "Bootstrap start: $(date)"
+              export DEBIAN_FRONTEND=noninteractive
+              export OPENCLAW_CF_DOMAIN="${CloudFrontDomain}"
+              apt-get update -q
+              apt-get install -y -q python3-pip
+              pip3 install --break-system-packages https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-py3-latest.tar.gz
+              CFN_INIT=$(which cfn-init 2>/dev/null || find /usr -name cfn-init 2>/dev/null | head -1)
+              if [ -z "$CFN_INIT" ]; then
+                echo "FATAL: cfn-init not found after install"
+                exit 1
+              fi
+              echo "Running cfn-init..."
+              $CFN_INIT -v --stack ${AWS::StackName} --resource OpenClawInstance --region ${AWS::Region} --configsets default
+              echo "Bootstrap complete: $(date)"
+            - CloudFrontDomain: !If [EnablePublic, !GetAtt OpenClawCloudFrontDistribution.DomainName, ""]
       Tags:
         - Key: Name
           Value: !Sub "${AWS::StackName}-instance"
@@ -1889,7 +1888,7 @@ Outputs:
         Public Access: ${PublicCost}
         WAF: ${WAFCost}
         Bedrock: Pay-per-use
-        Total: ~${TotalCost}/month
+        Total: ${TotalCost}/month
         Note: EC2 in public subnet with direct internet access (no NAT Gateway). Compute-optimized (c7g, 2 vCPU) for Node.js + Docker sandbox. Swap, health checks, OS patches always enabled.
       - EndpointCost: !If [CreateEndpoints, "~$88 ($0.01/hour/AZ x 2 AZs x 6 interface endpoints = $14.60/endpoint/mo: Bedrock Runtime, Bedrock Mantle (conditional), SSM, SSM Messages, EC2 Messages, CloudWatch Logs. S3 Gateway free)", "$0 (disabled)"]
         MonitoringCost: !If [EnableCW, "~$4 (CloudWatch Agent + detailed monitoring + alarms + logs)", "$0 (disabled)"]
@@ -1929,4 +1928,4 @@ Outputs:
 
   SecurityFeatures:
     Description: "Security protections available in this deployment"
-    Value: "See the SECURITY.md document athttps://github.com/aws-samples/sample-OpenClaw-on-AWS-with-Bedrock/blob/main/SECURITY.md"
+    Value: "See the SECURITY.md document at https://github.com/aws-samples/sample-OpenClaw-on-AWS-with-Bedrock/blob/main/SECURITY.md"
