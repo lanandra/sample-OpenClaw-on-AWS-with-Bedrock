@@ -1201,12 +1201,8 @@ Resources:
                     BIND_ADDRESS="0.0.0.0"
                     echo "Public access enabled - binding to 0.0.0.0"
 
-                    # Get CloudFront domain from stack outputs
-                    CLOUDFRONT_DOMAIN=$(aws cloudformation describe-stacks \
-                      --stack-name "${AWS::StackName}" \
-                      --region "${AWS::Region}" \
-                      --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontURL`].OutputValue' \
-                      --output text 2>/dev/null | grep -oP 'https://[^/]+' || echo "")
+                    # CloudFront domain injected by CloudFormation Fn::Sub at deploy time
+                    CLOUDFRONT_DOMAIN="https://${OpenClawCloudFrontDistribution.DomainName}"
 
                     if [ -n "$CLOUDFRONT_DOMAIN" ]; then
                       ALLOWED_ORIGINS="[\"$CLOUDFRONT_DOMAIN\"]"
