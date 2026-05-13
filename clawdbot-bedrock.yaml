@@ -27,12 +27,13 @@ Parameters:
     Description: "Bedrock model ID - Nova 2 Lite offers best price-performance for everyday tasks"
     AllowedValues:
       - "global.amazon.nova-2-lite-v1:0"
+      - "global.anthropic.claude-sonnet-4-6"
       - "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
       - "us.amazon.nova-pro-v1:0"
+      - "global.anthropic.claude-opus-4-7"
       - "global.anthropic.claude-opus-4-6-v1"
       - "global.anthropic.claude-opus-4-5-20251101-v1:0"
       - "global.anthropic.claude-haiku-4-5-20251001-v1:0"
-      - "global.anthropic.claude-sonnet-4-20250514-v1:0"
       - "us.deepseek.r1-v1:0"
       - "us.meta.llama3-3-70b-instruct-v1:0"
       - "moonshotai.kimi-k2.5"
@@ -994,8 +995,12 @@ Resources:
                       echo "FATAL: failed to mount data volume $DATA_DEVICE at /data"
                       exit 1
                     fi
-                    grep -q "$DATA_DEVICE" /etc/fstab || \
-                      echo "$DATA_DEVICE /data ext4 defaults,nofail 0 2" >> /etc/fstab
+                    # Use LABEL=openclaw-data instead of $DATA_DEVICE because NVMe
+                    # device enumeration order is not stable across EC2 reboots
+                    # (nvme0n1 and nvme1n1 can swap). The filesystem was labeled
+                    # 'openclaw-data' by mkfs.ext4 -L above. See issue #135.
+                    grep -q "LABEL=openclaw-data" /etc/fstab || \
+                      echo "LABEL=openclaw-data /data ext4 defaults,nofail 0 2" >> /etc/fstab
                     mkdir -p /data/openclaw
                     chown ubuntu:ubuntu /data/openclaw
 
@@ -1373,6 +1378,20 @@ Resources:
                   APT::Periodic::Unattended-Upgrade "1";
                   APT::Periodic::AutocleanInterval "7";
                   AUTO_UPGRADES
+
+                  # Disable automatic reboots from unattended-upgrades.
+                  # OpenClaw runs as a long-lived single-tenant service; reboots
+                  # should be operator-controlled, not silent at 05:54 UTC.
+                  # See issue #136 (paired with #135 fstab fix to prevent the
+                  # "5+ hours offline after silent reboot" failure mode).
+                  cat > /etc/apt/apt.conf.d/52auto-reboot-policy << 'REBOOT_POLICY'
+                  Unattended-Upgrade::Automatic-Reboot "false";
+                  Unattended-Upgrade::Automatic-Reboot-WithUsers "false";
+                  REBOOT_POLICY
+
+                  # Mask packagekit-offline-update.service to close the
+                  # secondary reboot path (template doesn't use packagekit).
+                  systemctl mask packagekit-offline-update.service 2>/dev/null || true
 
                   # Run openclaw doctor post-install
                   echo "[post] Running openclaw doctor..."
